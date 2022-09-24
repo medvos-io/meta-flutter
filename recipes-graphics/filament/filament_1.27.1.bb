@@ -70,7 +70,8 @@ do_install:append:class-target () {
     mv ${D}${libdir}/*/*.a ${D}${libdir}
     rm -rf ${D}${libdir}/${BUILD_ARCH}
 
-    rm ${D}/usr/docs
+    rm -rf ${D}/usr/docs
+
     rm ${D}/usr/LICENSE
     rm ${D}/usr/README.md
 }
