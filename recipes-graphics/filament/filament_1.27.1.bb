@@ -8,19 +8,26 @@ LICENSE = "Apache-2.0"
 
 LIC_FILES_CHKSUM = "file://LICENSE;md5=3b83ef96387f14655fc854ddc3c6bd57"
 
-DEPENDS += "\
-    compiler-rt \
-    libcxx \
+DEPENDS:class-native += "\
+    compiler-rt-native \
+    libcxx-native \
     "
 
 DEPENDS:class-target += "\
+    compiler-rt \
     filament-native \
-    libxkbcommon \
+    libcxx \
+    virtual/egl \
     "
+
+REQUIRED_DISTRO_FEATURES = "opengl"
 
 PV .= "+${SRCPV}"
 
 SRC_URI = "git://github.com/google/filament;protocol=https;branch=release \
+           file://0001-Wayland-FilamentApp.patch \
+           file://0002-Remove-unused-code.patch \
+           file://0003-Size-callback-prototype.patch \
            file://ImportExecutables-Release.cmake"
 
 SRCREV = "867d4d44f5ef2a56f663f5d8a7ba984407adfcbe"
@@ -35,15 +42,23 @@ RUNTIME:class-target = "llvm"
 TOOLCHAIN:class-target = "clang"
 PREFERRED_PROVIDER:class-target:libgcc = "compiler-rt"
 
-PACKAGECONFIG:class-target ??= "${@bb.utils.filter('DISTRO_FEATURES', 'wayland opengl vulkan', d)} samples"
+PACKAGECONFIG:class-target ??= "${@bb.utils.filter('DISTRO_FEATURES', 'vulkan wayland', d)} samples"
 
-PACKAGECONFIG[vulkan] = "-DFILAMENT_SUPPORTS_VULKAN=ON -DFILAMENT_SUPPORTS_OPENGL=OFF, -DFILAMENT_SUPPORTS_VULKAN=OFF -DFILAMENT_SUPPORTS_OPENGL=ON, vulkan-loader"
-PACKAGECONFIG[wayland] = "-DFILAMENT_SUPPORTS_WAYLAND=ON -DFILAMENT_SUPPORTS_X11=OFF, -DFILAMENT_SUPPORTS_WAYLAND=OFF -DFILAMENT_SUPPORTS_X11=OFF, wayland wayland-native wayland-protocols, libx11 libxi libxrandr"
-PACKAGECONFIG[mobile] = "-DFILAMENT_LINUX_IS_MOBILE=ON, -DFILAMENT_LINUX_IS_MOBILE=OFF"
-PACKAGECONFIG[samples] = "-DFILAMENT_SKIP_SAMPLES=OFF, -DFILAMENT_SKIP_SAMPLES=ON"
+PACKAGECONFIG[vulkan] = "\
+  -DFILAMENT_SUPPORTS_VULKAN=ON -DFILAMENT_SUPPORTS_OPENGL=OFF, \
+  -DFILAMENT_SUPPORTS_VULKAN=OFF -DFILAMENT_SUPPORTS_OPENGL=ON, \
+  vulkan-loader"
+PACKAGECONFIG[wayland] = "\
+  -DFILAMENT_SUPPORTS_WAYLAND=ON -DFILAMENT_SUPPORTS_XCB=OFF -DFILAMENT_SUPPORTS_XLIB=OFF, \
+  -DFILAMENT_SUPPORTS_WAYLAND=OFF, \
+  wayland-native wayland wayland-protocols libxkbcommon"
+PACKAGECONFIG[samples] = "\
+  -DFILAMENT_SKIP_SAMPLES=OFF, \
+  -DFILAMENT_SKIP_SAMPLES=ON"
 
-inherit cmake pkgconfig
+inherit cmake pkgconfig features_check
 
+# tool build pass
 EXTRA_OECMAKE:class-native += " \
     -D CMAKE_BUILD_TYPE=Release \
     -D FILAMENT_BUILD_FILAMAT=OFF \
@@ -52,11 +67,12 @@ EXTRA_OECMAKE:class-native += " \
     ${PACKAGECONFIG_CONFARGS} \
     "
 
+# target build pass
 EXTRA_OECMAKE:class-target += " \
     -D CMAKE_BUILD_TYPE=Release \
-    -D FILAMENT_HOST_TOOLS_ROOT=${STAGING_BINDIR_NATIVE} \
     -D IMPORT_EXECUTABLES_DIR=. \
-    -U DIST_ARCH \
+    -D DIST_ARCH=${BUILD_ARCH} \
+    -D FILAMENT_HOST_TOOLS_ROOT=${STAGING_BINDIR_NATIVE} \
     ${PACKAGECONFIG_CONFARGS} \
     "
 
@@ -66,12 +82,25 @@ do_configure:prepend:class-target () {
 
 do_install:append:class-target () {
 
+    # static libs
+    mv ${D}${libdir}/*/*.a ${D}${libdir}
+    rm -rf ${D}${libdir}/${BUILD_ARCH}
+
+    # user docs
     rm -rf ${D}/usr/docs
 
+    # misc
     rm ${D}/usr/LICENSE
     rm ${D}/usr/README.md
+
+    # install samples
+    if ${@bb.utils.contains('PACKAGECONFIG', 'samples', 'true', 'false', d)}; then
+        install -d ${D}${datadir}/filament/samples
+        find ${B}/samples -executable -type f -exec cp {} ${D}${datadir}/filament/samples \;
+    fi
 }
 
+FILES:${PN}-samples = "${datadir}"
 FILES:${PN}-staticdev = "${libdir}"
 
 BBCLASSEXTEND += "native nativesdk"

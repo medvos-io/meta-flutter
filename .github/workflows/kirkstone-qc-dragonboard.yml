@@ -93,6 +93,7 @@ jobs:
               flutter-test-localization-runtimerelease \
               flutter-test-membrane-runtimerelease \
               flutter-pi-runtimerelease \
+              filament-samples \
               "' >> conf/local.conf
           echo 'LICENSE_FLAGS_ACCEPTED += " commercial"' >> conf/local.conf
           echo '********** conf/local.conf **********'
@@ -225,6 +226,7 @@ jobs:
               flutter-test-localization \
               flutter-test-membrane-runtimerelease \
               flutter-pi-runtimerelease \
+              filament-samples \
               "' >> conf/local.conf
           echo 'LICENSE_FLAGS_ACCEPTED += " commercial"' >> conf/local.conf
           echo '********** conf/local.conf **********'
