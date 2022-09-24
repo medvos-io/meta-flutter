@@ -35,12 +35,10 @@ RUNTIME:class-target = "llvm"
 TOOLCHAIN:class-target = "clang"
 PREFERRED_PROVIDER:class-target:libgcc = "compiler-rt"
 
-PACKAGECONFIG:class-target ??= "${@bb.utils.filter('DISTRO_FEATURES', 'wayland opengl vulkan', d)} samples"
+PACKAGECONFIG:class-target ??= "${@bb.utils.filter('DISTRO_FEATURES', 'wayland vulkan', d)} samples"
 
-PACKAGECONFIG[opengl] = "-DFILAMENT_SUPPORTS_OPENGL=ON, -DFILAMENT_SUPPORTS_OPENGL=OFF, virtual/egl"
-PACKAGECONFIG[vulkan] = "-DFILAMENT_SUPPORTS_VULKAN=ON, -DFILAMENT_SUPPORTS_VULKAN=OFF, vulkan-loader"
-PACKAGECONFIG[wayland] = "-DFILAMENT_SUPPORTS_WAYLAND=ON, -DFILAMENT_SUPPORTS_WAYLAND=OFF, wayland wayland-native wayland-protocols"
-PACKAGECONFIG[x11] = "-DFILAMENT_SUPPORTS_X11=ON, -DFILAMENT_SUPPORTS_X11=OFF, libxcb libx11 libxi libxrandr"
+PACKAGECONFIG[vulkan] = "-DFILAMENT_SUPPORTS_VULKAN=ON -DFILAMENT_SUPPORTS_OPENGL=OFF, -DFILAMENT_SUPPORTS_VULKAN=OFF -DFILAMENT_SUPPORTS_OPENGL=ON, vulkan-loader, virtual/egl"
+PACKAGECONFIG[wayland] = "-DFILAMENT_SUPPORTS_WAYLAND=ON -DFILAMENT_SUPPORTS_X11=OFF, -DFILAMENT_SUPPORTS_WAYLAND=OFF -DFILAMENT_SUPPORTS_X11=OFF, wayland wayland-native wayland-protocols, libxcb libx11 libxi libxrandr"
 PACKAGECONFIG[mobile] = "-DFILAMENT_LINUX_IS_MOBILE=ON, -DFILAMENT_LINUX_IS_MOBILE=OFF"
 PACKAGECONFIG[samples] = "-DFILAMENT_SKIP_SAMPLES=OFF, -DFILAMENT_SKIP_SAMPLES=ON"
 
@@ -58,7 +56,7 @@ EXTRA_OECMAKE:class-target += " \
     -D CMAKE_BUILD_TYPE=Release \
     -D FILAMENT_HOST_TOOLS_ROOT=${STAGING_BINDIR_NATIVE} \
     -D IMPORT_EXECUTABLES_DIR=. \
-    -D DIST_ARCH=${BUILD_ARCH} \
+    -D DIST_ARCH=\"\" \
     ${PACKAGECONFIG_CONFARGS} \
     "
 
@@ -67,8 +65,6 @@ do_configure:prepend:class-target () {
 }
 
 do_install:append:class-target () {
-    mv ${D}${libdir}/*/*.a ${D}${libdir}
-    rm -rf ${D}${libdir}/${BUILD_ARCH}
 
     rm -rf ${D}/usr/docs
 
