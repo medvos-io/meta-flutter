@@ -35,14 +35,17 @@ PREFERRED_PROVIDER:libgcc = "compiler-rt"
 
 PACKAGECONFIG ??= "${@bb.utils.filter('DISTRO_FEATURES', 'wayland', d)}"
 
-PACKAGECONFIG[wayland] = "-DIC3D_USE_WAYLAND=ON, -DIC3D_USE_WAYLAND=OFF, wayland-native wayland wayland-protocols libxkbcommon"
+PACKAGECONFIG[wayland] = "\
+    -DIC3D_USE_WAYLAND=ON, \
+    -DIC3D_USE_WAYLAND=OFF, \
+    wayland-native wayland wayland-protocols libxkbcommon"
 
 inherit cmake pkgconfig features_check
 
 # target build pass
 EXTRA_OECMAKE += " \
     -DIC3D_LIB_ONLY=OFF \
-    -DIC3D_FILAMENT_SOURCE_DIR=${STAGING_TARGET_DIR} \
-    -DIC3D_FILAMENT_DIR=${STAGING_NATIVE_DIR}
+    -DIC3D_FILAMENT_SOURCE_DIR=${STAGING_DIR_TARGET} \
+    -DIC3D_FILAMENT_DIR=${STAGING_DIR_NATIVE} \
     ${PACKAGECONFIG_CONFARGS} \
     "
