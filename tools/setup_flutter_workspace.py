@@ -90,15 +90,19 @@ def main():
     #
     # Install required modules
     #
-    required = {'pycurl'}
+    # upgrade pip
+    python = sys.executable
+    subprocess.check_call([python, '-m', 'pip', 'install', '--upgrade', 'pip'], stdout=subprocess.DEVNULL)
 
-    installed = {pkg.key for pkg in pkg_resources.working_set}
-    missing = required - installed
+    #required = {'pycurl', 'dotenv'}
 
-    if missing:
-        print("Installing required Python packages: %s" % required)
-        python = sys.executable
-        subprocess.check_call([python, '-m', 'pip', 'install', *missing], stdout=subprocess.DEVNULL)
+    #installed = {pkg.key for pkg in pkg_resources.working_set}
+    #missing = required - installed
+
+    #if missing:
+        #print("Installing required Python packages: %s" % required)
+        #python = sys.executable
+        #subprocess.check_call([python, '-m', 'pip', 'install', *missing], stdout=subprocess.DEVNULL)
 
     #
     # Control+C handler
@@ -172,7 +176,6 @@ def main():
         clear_folder(app_folder)
         clear_folder(flutter_sdk_folder)
 
-
     #
     # App folder setup
     #
@@ -225,6 +228,11 @@ def main():
         subprocess.check_call(cmd, cwd=flutter_sdk_path)
 
     #
+    # Setup Docker Platforms
+    #
+    setup_docker_platforms(platforms, config.get('github_token'), config.get('cookie_file'))
+
+    #
     # Create script to setup environment
     #
     setup_env_script(workspace, args, platforms)
@@ -274,7 +282,6 @@ def test_internet_connection():
     if c.getinfo(pycurl.RESPONSE_CODE) == 200:
         res = True
 
-    c.close
     return res
 
 
@@ -340,6 +347,19 @@ def validate_platform_config(platform_):
         elif platform_['type'] == 'qemu':
             if 'flutter_runtime' not in platform_:
                 print_banner("Missing 'flutter_runtime' key in platform config")
+                return False
+            if 'runtime' not in platform_:
+                print_banner("Missing 'runtime' key in platform config")
+                return False
+            if 'custom-device' not in platform_:
+                print_banner("Missing 'custom-device' key in platform config")
+                return False
+
+            print("Platform ID: %s" % (platform_['id']))
+
+        elif platform_['type'] == 'docker':
+            if 'id' not in platform_:
+                print_banner("Missing 'id' key in platform config")
                 return False
             if 'runtime' not in platform_:
                 print_banner("Missing 'runtime' key in platform config")
@@ -586,7 +606,8 @@ def patch_custom_device_strings(devices, flutter_runtime):
                 device['sdkNameAndVersion'] = sdk_name_and_version
 
             if '${MACHINE_ARCH_HYPHEN}' in device['sdkNameAndVersion']:
-                device['sdkNameAndVersion'] = device['sdkNameAndVersion'].replace('${MACHINE_ARCH_HYPHEN}', host_arch.replace('_', '-'))
+                device['sdkNameAndVersion'] = device['sdkNameAndVersion'].replace('${MACHINE_ARCH_HYPHEN}',
+                                                                                  host_arch.replace('_', '-'))
 
         if device.get('postBuild'):
             device['postBuild'] = patch_string_array(token, workspace, device['postBuild'])
@@ -809,7 +830,7 @@ def fetch_https_progress(download_t, download_d, upload_t, upload_d):
     stream.flush()
 
 
-def fetch_https_binary_file(url, filename, redirect, headers):
+def fetch_https_binary_file(url, filename, redirect, headers, cookie_file, netrc):
     """Fetches binary file via HTTPS"""
     import pycurl
     import time
@@ -833,6 +854,14 @@ def fetch_https_binary_file(url, filename, redirect, headers):
         c.setopt(pycurl.AUTOREFERER, 1)
         c.setopt(pycurl.MAXREDIRS, 255)
 
+    if cookie_file:
+        cookie_file = os.path.expandvars(cookie_file)
+        print("Using cookie file: %s" % cookie_file)
+        c.setopt(pycurl.COOKIEFILE, cookie_file)
+
+    if netrc:
+        c.setopt(pycurl.NETRC, 1)
+
     while retries_left > 0:
         try:
             with open(filename, 'wb') as f:
@@ -846,8 +875,17 @@ def fetch_https_binary_file(url, filename, redirect, headers):
             retries_left -= 1
             time.sleep(delay_between_retries)
 
+    status = c.getinfo(pycurl.HTTP_CODE)
+
     c.close()
     os.sync()
+
+    if not redirect and status == 302:
+        print_banner("Download Status: %d" %status)
+        return False
+    if not status == 200:
+        print_banner("Download Status: %d" %status)
+        return False
 
     return success
 
@@ -904,7 +942,7 @@ def get_artifacts(config, flutter_sdk_path, flutter_auto_folder, agl_folder):
         host_type = get_host_type()
 
         print("** Downloading %s via %s" % (flutter_engine_zip, url))
-        res = fetch_https_binary_file(url, flutter_engine_zip, False, None)
+        res = fetch_https_binary_file(url, flutter_engine_zip, False, None, None, None)
         print(res)
         if not res:
             print_banner("Failed to download %s" % flutter_engine_zip)
@@ -947,6 +985,263 @@ def get_artifacts(config, flutter_sdk_path, flutter_auto_folder, agl_folder):
             subprocess.check_call(cmd, cwd=lib_folder)
 
     clear_folder(tmp_folder)
+
+
+def handle_pre_requisites(pre_requisites, host_machine_arch):
+    import shlex
+
+    if host_machine_arch in pre_requisites:
+        host_specific_pre_requisites = pre_requisites[host_machine_arch]
+
+        host_type = get_host_type()
+        if host_type == "linux":
+            os_release = get_freedesktop_os_release().get('NAME').lower()
+            if os_release in host_specific_pre_requisites:
+                distro = host_specific_pre_requisites[os_release]
+
+                if 'cmds' in distro:
+                    for cmd_str in distro['cmds']:
+                        cmd_str = os.path.expandvars(cmd_str)
+                        cmd = shlex.split(cmd_str)
+                        subprocess.call(cmd)
+
+                if 'conditionals' in distro:
+                    for condition in distro['conditionals']:
+                        if not os.path.exists(condition['path']):
+                            for cmd_str in condition['cmds']:
+                                cmd_str = os.path.expandvars(cmd_str)
+                                cmd = shlex.split(cmd_str)
+                                subprocess.call(cmd)
+
+        if host_type == "darwin":
+            distro = host_specific_pre_requisites['darwin']
+
+            if 'cmds' in distro:
+                for cmd in distro['cmds']:
+                    cmd_arr = []
+                    for token in cmd:
+                        cmd_arr.append(os.path.expandvars(token))
+                    subprocess.call(cmd_arr)
+
+            if 'conditionals' in distro:
+                for condition in distro['conditionals']:
+                    if not os.path.exists(condition['path']):
+                        for cmd in condition['cmds']:
+                            subprocess.call(cmd)
+
+
+def download_https_file(cwd, url, file, cookie_file, netrc, md5sum):
+    download_filepath = cwd.joinpath(file)
+    if md5sum and os.path.exists(download_filepath):
+        import hashlib
+        md5_hash = hashlib.md5()
+        with open(download_filepath,"rb") as f:
+            # Read and update hash in chunks of 4K
+            for byte_block in iter(lambda: f.read(4096),b""):
+                md5_hash.update(byte_block)
+
+        # don't download if md5sum is good
+        if md5sum == md5_hash.hexdigest():
+            return
+        else:
+            os.remove(download_filepath)
+
+    print("** Downloading %s via %s" % (file, url))
+    res = fetch_https_binary_file(url, download_filepath, False, None, cookie_file, netrc)
+    if not res:
+        os.remove(download_filepath)
+        print_banner("Failed to download %s" % file)
+        return
+    print("** Downloaded %s" % file)
+
+
+def get_filename_from_url(url):
+    import os
+    from urllib.parse import urlparse
+
+    a = urlparse(url)
+    return os.path.basename(a.path)
+
+
+def check_netrc_for_str(pattern):
+    from pathlib import Path
+
+    p = Path('~').expanduser()
+    netrc = p.joinpath(".netrc")
+
+    if not os.path.exists(netrc):
+        print_banner("~/.netrc does not exist")
+        return False
+
+    file = open(netrc, "r")
+    for line in file:
+        if pattern in line:
+            file.close()
+            return True
+
+    file.close()
+    print_banner("Missing %s from ~/.netrc" % pattern)
+    return False
+
+
+def handle_http_obj(obj, host_machine_arch, cwd, cookie_file, netrc):
+    if 'artifacts' in obj:
+        artifacts = obj['artifacts']
+
+        if 'cookie_file' in obj:
+            cookie_file = obj['cookie_file']
+
+        if host_machine_arch in artifacts:
+            host_specific_artifacts = artifacts[host_machine_arch]
+
+            url = None
+            if 'url' in obj:
+                url = obj['url']
+
+            for artifact in host_specific_artifacts:
+                endpoint = artifact['endpoint']
+                md5sum = artifact['md5sum']
+
+                base_url = url + endpoint
+                base_url = os.path.expandvars(base_url)
+                filename = get_filename_from_url(base_url)
+
+                download_https_file(cwd, base_url, filename, cookie_file, netrc, md5sum)
+
+
+def handle_docker_obj(obj, host_machine_arch, cwd):
+
+    #    if 'registry' in obj:
+    #        registry = obj['registry']
+    #        cmd = ["docker", "login", registry]
+    #        subprocess.call(cmd)
+
+    if 'compose-yml' in obj:
+        compose_yml = obj['compose-yml']
+
+    if 'load' in obj:
+        import shlex
+        load = obj['load']
+        if 'cmd' in load and 'files' in load:
+            for file in load['files']:
+                file = cwd.joinpath(file)
+                print(file)
+                if file.exists():
+                    cmd = load['cmd'] % file
+                    expanded_cmd = os.path.expandvars(cmd)
+                    cmd_arr = shlex.split(expanded_cmd)
+                    print(cmd_arr)
+                    subprocess.check_call(cmd_arr)
+                else:
+                    print("File note found: %s" % file)
+
+def handle_github_obj(obj, cwd, token):
+
+    if 'owner' in obj and 'repo' in obj and 'workflow' in obj and 'artifact_names' in obj:
+        print_banner("Downloading GitHub artifact")
+
+        owner = obj['owner']
+        repo = obj['repo']
+        workflow = obj['workflow']
+        artifact_names = obj['artifact_names']
+
+        token = get_github_token(token)
+
+        workflow_runs = get_github_workflow_runs(token, owner, repo, workflow)
+        run_id = None
+        for run in workflow_runs:
+            if run['conclusion'] == "success":
+                run_id = run['id']
+                break
+
+        artifacts = get_github_workflow_artifacts(token, owner, repo, run_id)
+
+        for artifact in artifacts:
+
+            name = artifact.get('name')
+            print(name)
+
+            for artifact_name in artifact_names:
+
+                if artifact_name == name:
+                    url = artifact.get('archive_download_url')
+
+                    print("Downloading %s run_id: %s via %s" % (workflow, run_id, url))
+
+                    filename = "%s.zip" % name
+                    downloaded_file = get_github_artifact(token, url, filename)
+                    if downloaded_file is None:
+                        print_banner("Failed to download %s" % filename)
+                        continue
+
+                    print("Downloaded: %s" % downloaded_file)
+
+                    with zipfile.ZipFile(downloaded_file, "r") as zip_ref:
+                        zip_ref.extractall(str(cwd))
+
+                    cmd = ["rm", downloaded_file]
+                    subprocess.check_output(cmd)
+                    continue
+
+
+def handle_artifacts_obj(obj, host_machine_arch, cwd, git_token, cookie_file):
+
+    netrc=False
+    if 'netrc' in obj:
+        netrc = obj['netrc']
+        if 'machine' in netrc:
+            machine = netrc['machine']
+            if not check_netrc_for_str(machine):
+                sys.exit("Fix ~/.netrc to continue")
+            else:
+                netrc=True
+                print('~/.netrc is good')
+
+    if 'cookie_file' in obj:
+        cookie_file = obj['cookie_file']
+
+    if 'http' in obj:
+        handle_http_obj(obj['http'], host_machine_arch, cwd, cookie_file, netrc)
+
+    if 'github' in obj:
+        handle_github_obj(obj['github'], cwd, git_token)
+
+
+def handle_dotenv(dotenv_files):
+    from dotenv import load_dotenv
+    from pathlib import Path
+
+    for dotenv_file in dotenv_files:
+        dotenv_path = Path(dotenv_file)
+        load_dotenv(dotenv_path=dotenv_path)
+        print("Loaded: %s" % dotenv_file)
+
+
+def setup_docker_platforms(platforms, git_token, cookie_file):
+    for platform_ in platforms:
+        if platform_['type'] == 'docker':
+            runtime = platform_['runtime']
+
+            print_banner("Setting up Docker")
+            host_machine_arch = get_host_machine_arch()
+
+            from pathlib import Path
+            workspace = Path(os.environ.get('FLUTTER_WORKSPACE'))
+            cwd = workspace.joinpath('.' + platform_['id'])
+            print("Working Directory: %s" % cwd)
+            make_sure_path_exists(cwd)
+
+            if 'dotenv' in runtime:
+                handle_dotenv(runtime['dotenv'])
+
+            if 'pre-requisites' in runtime:
+                handle_pre_requisites(runtime['pre-requisites'], host_machine_arch)
+
+            if 'artifacts' in runtime:
+                handle_artifacts_obj(runtime['artifacts'], host_machine_arch, cwd, git_token, cookie_file)
+
+            if 'docker' in runtime:
+                handle_docker_obj(runtime['docker'], host_machine_arch, cwd)
 
 
 def base64_to_string(b):
@@ -1037,7 +1332,7 @@ def get_github_artifact(token, url, filename):
     tmp_file = "%s/%s" % (get_workspace_tmp_folder(), filename)
 
     headers = ['Authorization: token %s' % token]
-    if fetch_https_binary_file(url, tmp_file, True, headers):
+    if fetch_https_binary_file(url, tmp_file, True, headers, None, False):
         return tmp_file
 
     return None
@@ -1095,7 +1390,7 @@ def fedora_install_pkg_if_not_installed(package):
 def is_linux_host_kvm_capable():
     """Determine if CPU supports HW Hypervisor support"""
     cmd = 'cat /proc/cpuinfo |egrep "vmx|svm"'
-    ps = subprocess.Popen(cmd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    ps = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     output = ps.communicate()[0]
     if len(output):
         return True
@@ -1153,7 +1448,8 @@ def mac_is_cocoapods_installed():
 def mac_install_cocoapods_if_not_installed():
     if not mac_is_cocoapods_installed():
         subprocess.run(['sudo', 'gem', 'install', 'cocoapods'])
-        subprocess.run(['sudo', 'gem', 'uninstall', 'ffi', '&&', 'sudo', 'gem', 'install', 'ffi', '--', '--enable-libffi-alloc'])
+        subprocess.run(
+            ['sudo', 'gem', 'uninstall', 'ffi', '&&', 'sudo', 'gem', 'install', 'ffi', '--', '--enable-libffi-alloc'])
 
 
 def install_minimum_runtime_deps():
@@ -1170,6 +1466,9 @@ def install_minimum_runtime_deps():
             ubuntu_install_pkg_if_not_installed("curl")
             ubuntu_install_pkg_if_not_installed("libcurl4-openssl-dev")
             ubuntu_install_pkg_if_not_installed("libssl-dev")
+            ubuntu_install_pkg_if_not_installed("python3-dotenv")
+            ubuntu_install_pkg_if_not_installed("python3-pycurl")
+            ubuntu_install_pkg_if_not_installed("python3-pip")
 
         elif os_release == 'Fedora Linux':
             cmd = ["sudo", "dnf", "update", "-y"]
@@ -1178,6 +1477,9 @@ def install_minimum_runtime_deps():
             fedora_install_pkg_if_not_installed("libcurl-devel")
             fedora_install_pkg_if_not_installed("openssl-devel")
             fedora_install_pkg_if_not_installed("gtk3-devel")
+            fedora_install_pkg_if_not_installed("python3-dotenv")
+            fedora_install_pkg_if_not_installed("python3-pycurl")
+            fedora_install_pkg_if_not_installed("python3-pip")
 
     elif host_type == "darwin":
         brew_path = get_mac_brew_path()
@@ -1453,7 +1755,6 @@ def install_flutter_auto_github_artifact(token, owner, repo, workflow, github_ar
                 cmd = ["rm", downloaded_file]
                 subprocess.check_output(cmd)
 
-
                 if os_release == 'Ubuntu':
 
                     deb_file = None
@@ -1487,7 +1788,6 @@ def install_flutter_auto_github_artifact(token, owner, repo, workflow, github_ar
 
                     cmd = ["sudo", "dnf", "install", "-y", "./%s" % rpm_file]
                     subprocess.call(cmd)
-
 
                 for f in files_to_remove:
                     cmd = ["rm", f]
@@ -1593,7 +1893,6 @@ def setup_env_script(workspace, args, platform_):
                     arch = get_host_machine_arch()
                     arch_hyphen = arch.replace('_', '-')
 
-
                     # qemu command
                     cmd = runtime.get('cmd')
                     if '${FORMAL_MACHINE_ARCH}' in cmd:
@@ -1646,7 +1945,6 @@ def setup_env_script(workspace, args, platform_):
                         if '${QEMU_IMAGE}' in args:
                             args = args.replace('${QEMU_IMAGE}', qemu_image)
 
-
                     if '${MACHINE_ARCH_HYPHEN}' in qemu_image:
                         qemu_image = qemu_image.replace('${MACHINE_ARCH_HYPHEN}', arch_hyphen)
 
@@ -1658,7 +1956,6 @@ def setup_env_script(workspace, args, platform_):
 
                     if '${RANDOM_MAC}' in args:
                         args = args.replace('${RANDOM_MAC}', mac_pretty_print(random_mac()))
-
 
                     #
                     # extras
@@ -1679,7 +1976,6 @@ def setup_env_script(workspace, args, platform_):
                             print_banner('QEMU_EXTRA: %s' % runtime.get('qemu_extra_fedora'))
                             qemu_extra = runtime.get('qemu_extra_fedora')
 
-
                         if is_linux_host_kvm_capable():
                             args = format('-enable-kvm %s' % args)
 
@@ -1688,10 +1984,8 @@ def setup_env_script(workspace, args, platform_):
                         print_banner('QEMU_EXTRA: %s' % runtime.get('qemu_extra_darwin'))
                         qemu_extra = runtime.get('qemu_extra_darwin')
 
-
                     if '${QEMU_EXTRA}' in args:
                         args = args.replace('${QEMU_EXTRA}', qemu_extra)
-
 
                     #
                     # writes scripts
