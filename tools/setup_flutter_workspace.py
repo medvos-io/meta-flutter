@@ -27,6 +27,7 @@ import io
 import json
 import os
 import platform
+import shlex
 import signal
 import subprocess
 import sys
@@ -44,6 +45,12 @@ QEMU_DEFAULT_WINDOW_TYPE = "BG"
 QEMU_DEFAULT_WIDTH = 1920
 QEMU_DEFAULT_HEIGHT = 1080
 QEMU_DEFAULT_FULLSCREEN = True
+
+DEFAULT_WINDOW_TYPE = "Normal"
+DEFAULT_FULLSCREEN = True
+DEFAULT_WIDTH = 1920
+DEFAULT_HEIGHT = 1080
+
 
 # use kiB's
 kb = 1024
@@ -228,7 +235,7 @@ def main():
         subprocess.check_call(cmd, cwd=flutter_sdk_path)
 
     #
-    # Setup Docker Platforms
+    # Setup Docker Platform(s)
     #
     setup_docker_platforms(platforms, config.get('github_token'), config.get('cookie_file'))
 
@@ -622,13 +629,56 @@ def patch_custom_device_strings(devices, flutter_runtime):
     return devices
 
 
+def fixup_custom_device(obj):
+    """ Patch custom device string environmental variables to use literal values """
+
+    host_arch = get_host_machine_arch()
+
+    obj['id'] = os.path.expandvars(obj['id'])
+    obj['label'] = os.path.expandvars(obj['label'])
+    obj['sdkNameAndVersion'] = os.path.expandvars(obj['sdkNameAndVersion'])
+    if host_arch == 'x86_64':
+        obj['platform'] = 'linux-x64'
+    elif host_arch == 'arm64':
+        obj['platform'] = 'linux-arm64'
+
+    obj['ping'] = os.path.expandvars(obj['ping'])
+    obj['ping'] = shlex.split(obj['ping'])
+
+    obj['pingSuccessRegex'] = os.path.expandvars(obj['pingSuccessRegex'])
+
+    if obj['postBuild']:
+        obj['postBuild'] = os.path.expandvars(obj['postBuild'])
+        obj['postBuild'] = shlex.split(obj['postBuild'])
+    if obj['install']:
+        obj['install'] = os.path.expandvars(obj['install'])
+        obj['install'] = shlex.split(obj['install'])
+    if obj['uninstall']:
+        obj['uninstall'] = os.path.expandvars(obj['uninstall'])
+        obj['uninstall'] = shlex.split(obj['uninstall'])
+    if obj['runDebug']:
+        obj['runDebug'] = os.path.expandvars(obj['runDebug'])
+        obj['runDebug'] = shlex.split(obj['runDebug'])
+    if obj['forwardPort']:
+        obj['forwardPort'] = os.path.expandvars(obj['forwardPort'])
+        obj['forwardPort'] = shlex.split(obj['forwardPort'])
+    if obj['forwardPortSuccessRegex']:
+        obj['forwardPortSuccessRegex'] = os.path.expandvars(obj['forwardPortSuccessRegex'])
+        obj['forwardPortSuccessRegex'] = shlex.split(obj['forwardPortSuccessRegex'])
+    if obj['screenshot']:
+        obj['screenshot'] = os.path.expandvars(obj['screenshot'])
+        obj['screenshot'] = shlex.split(obj['screenshot'])
+
+    return obj
+
+
 def add_flutter_custom_device(device_config, flutter_runtime):
     """ Add a single Flutter custom device from json string """
 
     if not validate_custom_device_config(device_config):
         exit(1)
 
-    # print("Adding custom-device: %s" % device_config)
+    #print("Adding custom-device: %s" % device_config)
 
     custom_devices_file = get_flutter_custom_config_path()
 
@@ -657,12 +707,71 @@ def add_flutter_custom_device(device_config, flutter_runtime):
 
     custom_devices = {'custom-devices': patched_device_list}
 
-    # print("custom_devices_file: %s" % custom_devices_file)
+    print("custom_devices_file: %s" % custom_devices_file)
     with open(custom_devices_file, "w+") as outfile:
         json.dump(custom_devices, outfile, indent=4)
 
     return
 
+
+def add_flutter_custom_device_ex(custom_device, flutter_runtime):
+    """ Add a single Flutter custom device from json string """
+
+    if not validate_custom_device_config(custom_device):
+        sys.exit("Invalid Custom Device configuration")
+
+    device_config = fixup_custom_device(custom_device)
+    #print("Adding custom-device: %s" % device_config)
+
+    custom_devices_file = get_flutter_custom_config_path()
+
+    new_device_list = []
+    if os.path.exists(custom_devices_file):
+
+        obj = None
+        f = open(custom_devices_file, "r")
+        try:
+            obj = json.load(f)
+        except json.decoder.JSONDecodeError:
+            print_banner("Invalid JSON in %s" % custom_devices_file)  # in case json is invalid
+            exit(1)
+        f.close()
+
+        id_ = device_config['id']
+
+        if 'custom-devices' in obj:
+            devices = obj['custom-devices']
+            for device in devices:
+                if 'id' in device and id_ != device['id']:
+                    new_device_list.append(device)
+
+    new_device_list.append(device_config)
+    #patched_device_list = patch_custom_device_strings_ex(new_device_list)
+
+    custom_devices = {'custom-devices': new_device_list}
+
+    print("custom_devices_file: %s" % custom_devices_file)
+    with open(custom_devices_file, "w+") as outfile:
+        json.dump(custom_devices, outfile, indent=4)
+
+    return
+
+def handle_custom_devices(platform):
+    """ Updates the custom_devices.json with platform config """
+    custom_devices = get_flutter_custom_devices()
+
+    overwrite_existing = platform.get('overwrite-existing')
+
+    # check if id already exists, remove if overwrite enabled, otherwise skip
+    if custom_devices:
+        for custom_device in custom_devices:
+            if 'id' in custom_device:
+                id_ = custom_device['id']
+                if overwrite_existing and (id_ == platform['id']):
+                    # print("attempting to remove custom-device: %s" % id_)
+                    remove_flutter_custom_devices_id(id_)
+
+    add_flutter_custom_device_ex(platform['custom-device'], platform['flutter_runtime'])
 
 def update_flutter_custom_devices_list(platforms):
     """ Updates the custom_devices.json with all custom-devices in
@@ -986,12 +1095,26 @@ def get_artifacts(config, flutter_sdk_path, flutter_auto_folder, agl_folder):
 
     clear_folder(tmp_folder)
 
+def handle_conditionals(conditionals, cwd):
 
-def handle_pre_requisites(pre_requisites, host_machine_arch):
-    import shlex
+    if conditionals:
+        for condition in conditionals:
+            path = os.path.expandvars(condition['path'])
+            if not os.path.exists(path):
+                print("** Conditionals **")
+                for cmd_str in condition['cmds']:
+                    cmd_str = os.path.expandvars(cmd_str)
+                    cmd_arr = shlex.split(cmd_str)
+                    #print(cmd_arr)
+                    subprocess.call(cmd_arr, cwd=cwd)
 
-    if host_machine_arch in pre_requisites:
-        host_specific_pre_requisites = pre_requisites[host_machine_arch]
+
+def handle_pre_requisites(obj, host_machine_arch, cwd):
+    if not obj:
+        return
+
+    if host_machine_arch in obj:
+        host_specific_pre_requisites = obj[host_machine_arch]
 
         host_type = get_host_type()
         if host_type == "linux":
@@ -999,19 +1122,9 @@ def handle_pre_requisites(pre_requisites, host_machine_arch):
             if os_release in host_specific_pre_requisites:
                 distro = host_specific_pre_requisites[os_release]
 
-                if 'cmds' in distro:
-                    for cmd_str in distro['cmds']:
-                        cmd_str = os.path.expandvars(cmd_str)
-                        cmd = shlex.split(cmd_str)
-                        subprocess.call(cmd)
+                handle_commands(distro.get('cmds'), cwd)
 
-                if 'conditionals' in distro:
-                    for condition in distro['conditionals']:
-                        if not os.path.exists(condition['path']):
-                            for cmd_str in condition['cmds']:
-                                cmd_str = os.path.expandvars(cmd_str)
-                                cmd = shlex.split(cmd_str)
-                                subprocess.call(cmd)
+                handle_conditionals(distro.get('conditionals'), cwd)
 
         if host_type == "darwin":
             distro = host_specific_pre_requisites['darwin']
@@ -1030,18 +1143,25 @@ def handle_pre_requisites(pre_requisites, host_machine_arch):
                             subprocess.call(cmd)
 
 
+def get_md5sum(file):
+    """Return md5sum of specified file"""
+    import hashlib
+
+    md5_hash = hashlib.md5()
+    with open(file,"rb") as f:
+        # Read and update hash in chunks of 4K
+        for byte_block in iter(lambda: f.read(4096),b""):
+            md5_hash.update(byte_block)
+
+    return md5_hash.hexdigest()
+
+
 def download_https_file(cwd, url, file, cookie_file, netrc, md5sum):
     download_filepath = cwd.joinpath(file)
     if md5sum and os.path.exists(download_filepath):
-        import hashlib
-        md5_hash = hashlib.md5()
-        with open(download_filepath,"rb") as f:
-            # Read and update hash in chunks of 4K
-            for byte_block in iter(lambda: f.read(4096),b""):
-                md5_hash.update(byte_block)
-
         # don't download if md5sum is good
-        if md5sum == md5_hash.hexdigest():
+        if md5sum == get_md5sum(download_filepath):
+            print("** Using %s" % download_filepath)
             return
         else:
             os.remove(download_filepath)
@@ -1100,7 +1220,7 @@ def handle_http_obj(obj, host_machine_arch, cwd, cookie_file, netrc):
 
             for artifact in host_specific_artifacts:
                 endpoint = artifact['endpoint']
-                md5sum = artifact['md5sum']
+                md5sum = artifact.get('md5sum')
 
                 base_url = url + endpoint
                 base_url = os.path.expandvars(base_url)
@@ -1108,32 +1228,45 @@ def handle_http_obj(obj, host_machine_arch, cwd, cookie_file, netrc):
 
                 download_https_file(cwd, base_url, filename, cookie_file, netrc, md5sum)
 
+def handle_commands(cmds, cwd):
+    if cmds:
+        for cmd in cmds:
+            expanded_cmd = os.path.expandvars(cmd)
+            cmd_arr = shlex.split(expanded_cmd)
+            #print(cmd_arr)
+            subprocess.check_call(cmd_arr, cwd=cwd)
+
+
+def handle_docker_registry(obj):
+    if 'registry' in obj:
+        registry = obj['registry']
+        cmd = ["docker", "login", registry]
+        subprocess.call(cmd)
+
+
+def docker_compose_start(docker_compose_yml_dir):
+    if not docker_compose_yml_dir:
+        return
+
+    subprocess.check_call(["docker-compose", "up", "-d"], cwd=docker_compose_yml_dir)
+
+
+def docker_compose_stop(docker_compose_yml_dir):
+    if not docker_compose_yml_dir:
+        return
+
+    subprocess.check_call(["docker-compose", "stop"], cwd=docker_compose_yml_dir)
+
 
 def handle_docker_obj(obj, host_machine_arch, cwd):
+    if not obj:
+        return
 
-    #    if 'registry' in obj:
-    #        registry = obj['registry']
-    #        cmd = ["docker", "login", registry]
-    #        subprocess.call(cmd)
+    #handle_docker_registry(obj.get('registry'))
+    docker_compose_stop(obj.get('docker-compose-yml-dir'))
+    handle_commands(obj.get('post_cmds'), cwd)
+    handle_conditionals(obj.get('conditionals'), cwd)
 
-    if 'compose-yml' in obj:
-        compose_yml = obj['compose-yml']
-
-    if 'load' in obj:
-        import shlex
-        load = obj['load']
-        if 'cmd' in load and 'files' in load:
-            for file in load['files']:
-                file = cwd.joinpath(file)
-                print(file)
-                if file.exists():
-                    cmd = load['cmd'] % file
-                    expanded_cmd = os.path.expandvars(cmd)
-                    cmd_arr = shlex.split(expanded_cmd)
-                    print(cmd_arr)
-                    subprocess.check_call(cmd_arr)
-                else:
-                    print("File note found: %s" % file)
 
 def handle_github_obj(obj, cwd, token):
 
@@ -1144,6 +1277,7 @@ def handle_github_obj(obj, cwd, token):
         repo = obj['repo']
         workflow = obj['workflow']
         artifact_names = obj['artifact_names']
+        post_process = obj.get('post_process')
 
         token = get_github_token(token)
 
@@ -1183,8 +1317,16 @@ def handle_github_obj(obj, cwd, token):
                     subprocess.check_output(cmd)
                     continue
 
+        if post_process:
+            for cmd in post_process:
+                expanded_cmd = os.path.expandvars(cmd)
+                cmd_arr = shlex.split(expanded_cmd)
+                subprocess.call(cmd_arr, cwd=cwd, env=os.environ)
+
 
 def handle_artifacts_obj(obj, host_machine_arch, cwd, git_token, cookie_file):
+    if not obj:
+        return
 
     netrc=False
     if 'netrc' in obj:
@@ -1208,6 +1350,9 @@ def handle_artifacts_obj(obj, host_machine_arch, cwd, git_token, cookie_file):
 
 
 def handle_dotenv(dotenv_files):
+    if not dotenv_files:
+        return
+
     from dotenv import load_dotenv
     from pathlib import Path
 
@@ -1215,6 +1360,57 @@ def handle_dotenv(dotenv_files):
         dotenv_path = Path(dotenv_file)
         load_dotenv(dotenv_path=dotenv_path)
         print("Loaded: %s" % dotenv_file)
+
+
+def handle_env(env_variables):
+    if not env_variables:
+        return
+
+    for k, v in env_variables.items():
+        os.environ[k] = os.path.expandvars(v)
+
+def get_platform_working_dir(platform_id):
+    from pathlib import Path
+    workspace = Path(os.environ.get('FLUTTER_WORKSPACE'))
+    cwd = workspace.joinpath('.' + platform_id)
+    os.environ["PLATFORM_ID_DIR_RELATIVE"] = '.' + platform_id
+    os.environ["PLATFORM_ID_DIR"] = str(cwd)
+    print("Working Directory: %s" % cwd)
+    make_sure_path_exists(cwd)
+    return cwd
+
+
+def create_platform_config_file(obj, cwd):
+
+    if obj is None:
+        config_window_type = DEFAULT_WINDOW_TYPE
+        config_width = DEFAULT_WIDTH
+        config_height = DEFAULT_HEIGHT
+        config_fullscreen = DEFAULT_FULLSCREEN
+
+    else:
+        config_width = obj.get('width')
+        if config_width is None:
+            config_width = DEFAULT_WIDTH
+
+        config_height = obj.get('height')
+        if config_height is None:
+            config_height = DEFAULT_HEIGHT
+
+        config_fullscreen = obj.get('fullscreen')
+        if config_fullscreen is None:
+            config_fullscreen = DEFAULT_FULLSCREEN
+
+        config_window_type = obj.get('window_type')
+        if config_window_type is None:
+            config_window_type = DEFAULT_WINDOW_TYPE
+
+    default_config_filepath = cwd.joinpath('default_config.json')
+    with open(default_config_filepath, 'w+') as default_config_file:
+        config = {"view": {"window_type": config_window_type, "width": config_width, "height": config_height,
+                           "fullscreen": config_fullscreen}}
+        json.dump(config, default_config_file, indent=2)
+
 
 
 def setup_docker_platforms(platforms, git_token, cookie_file):
@@ -1225,23 +1421,16 @@ def setup_docker_platforms(platforms, git_token, cookie_file):
             print_banner("Setting up Docker")
             host_machine_arch = get_host_machine_arch()
 
-            from pathlib import Path
-            workspace = Path(os.environ.get('FLUTTER_WORKSPACE'))
-            cwd = workspace.joinpath('.' + platform_['id'])
-            print("Working Directory: %s" % cwd)
-            make_sure_path_exists(cwd)
+            cwd = get_platform_working_dir(platform_['id'])
 
-            if 'dotenv' in runtime:
-                handle_dotenv(runtime['dotenv'])
+            handle_dotenv(platform_.get('dotenv'))
+            handle_env(platform_.get('env'))
+            handle_pre_requisites(runtime.get('pre-requisites'), host_machine_arch, cwd)
+            handle_artifacts_obj(runtime.get('artifacts'), host_machine_arch, cwd, git_token, cookie_file)
+            handle_docker_obj(runtime.get('docker'), host_machine_arch, cwd)
 
-            if 'pre-requisites' in runtime:
-                handle_pre_requisites(runtime['pre-requisites'], host_machine_arch)
-
-            if 'artifacts' in runtime:
-                handle_artifacts_obj(runtime['artifacts'], host_machine_arch, cwd, git_token, cookie_file)
-
-            if 'docker' in runtime:
-                handle_docker_obj(runtime['docker'], host_machine_arch, cwd)
+            create_platform_config_file(runtime.get('config'), cwd)
+            handle_custom_devices(platform_)
 
 
 def base64_to_string(b):
