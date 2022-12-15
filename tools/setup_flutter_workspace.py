@@ -441,6 +441,7 @@ def validate_custom_device_config(config):
 
 
 def get_repo(base_folder, uri, branch, rev):
+    """ Clone Git Repo """
     if not uri:
         print("repo entry needs a 'uri' key.  Skipping")
         return
@@ -486,10 +487,6 @@ def get_repo(base_folder, uri, branch, rev):
         cmd = ['git', 'submodules', 'update', '--init', '--recursive']
         subprocess.check_call(cmd, cwd=git_folder)
 
-    # show top of log
-    cmd = ['git', 'log', '-1']
-    subprocess.check_call(cmd, cwd=git_folder)
-
 
 def get_workspace_repos(base_folder, config):
     """ Clone GIT repos referenced in config repos dict to base_folder """
@@ -502,6 +499,9 @@ def get_workspace_repos(base_folder, config):
 
     for repo in repos:
         get_repo(base_folder, repo.get('uri'), repo.get('branch'), repo.get('rev'))
+
+        # reset sudo timeout
+        subprocess.check_call(['sudo', '-v'], stdout=subprocess.DEVNULL)
 
     #
     # Create vscode startup tasks
@@ -772,7 +772,7 @@ def handle_custom_devices(platform_):
     """ Updates the custom_devices.json with platform config """
     custom_devices = get_flutter_custom_devices()
 
-    overwrite_existing = platform.get('overwrite-existing')
+    overwrite_existing = platform_.get('overwrite-existing')
 
     # check if id already exists, remove if overwrite enabled, otherwise skip
     if custom_devices:
@@ -1385,7 +1385,6 @@ def handle_dotenv(dotenv_files):
         load_dotenv(dotenv_path=dotenv_path)
         print("Loaded: %s" % dotenv_file)
 
-
 def handle_env(env_variables):
     if not env_variables:
         return
@@ -1452,11 +1451,16 @@ def setup_platforms(platforms, git_token, cookie_file):
 
         cwd = get_platform_working_dir(platform_['id'])
 
+        subprocess.check_call(['sudo', '-v'], stdout=subprocess.DEVNULL)
+
         handle_dotenv(platform_.get('dotenv'))
         handle_env(platform_.get('env'))
         handle_pre_requisites(runtime.get('pre-requisites'), host_machine_arch, cwd)
+        subprocess.check_call(['sudo', '-v'], stdout=subprocess.DEVNULL)
         handle_artifacts_obj(runtime.get('artifacts'), host_machine_arch, cwd, git_token, cookie_file)
+        subprocess.check_call(['sudo', '-v'], stdout=subprocess.DEVNULL)
         handle_docker_obj(runtime.get('docker'), host_machine_arch, cwd)
+        subprocess.check_call(['sudo', '-v'], stdout=subprocess.DEVNULL)
 
         create_platform_config_file(runtime.get('config'), cwd)
         handle_conditionals(runtime.get('conditionals'), cwd)
