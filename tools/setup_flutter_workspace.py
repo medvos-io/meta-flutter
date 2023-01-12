@@ -342,7 +342,14 @@ def validate_platform_config(platform_):
         print_banner("Missing 'type' key in platform config")
         return False
     else:
-        if platform_['type'] == 'host':
+        if platform_['type'] == 'generic':
+            if 'runtime' not in platform_:
+                print_banner("Missing 'runtime' key in platform config")
+                return False
+
+            print("Platform ID: %s" % (platform_['id']))
+
+        elif platform_['type'] == 'host':
             if 'flutter_runtime' not in platform_:
                 print_banner("Missing 'flutter_runtime' key in platform config")
                 return False
@@ -770,6 +777,10 @@ def add_flutter_custom_device_ex(custom_device, flutter_runtime):
 
 def handle_custom_devices(platform_):
     """ Updates the custom_devices.json with platform config """
+
+    if "custom-device" not in platform_:
+        return
+
     custom_devices = get_flutter_custom_devices()
 
     overwrite_existing = platform_.get('overwrite-existing')
@@ -1174,15 +1185,37 @@ def get_md5sum(file):
     return md5_hash.hexdigest()
 
 
-def download_https_file(cwd, url, file, cookie_file, netrc, md5sum):
+def get_sha1sum(file):
+    """Return sha1sum of specified file"""
+    import hashlib
+
+    sha1_hash = hashlib.sha1()
+    with open(file, "rb") as f:
+        # Read and update hash in chunks of 4K
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha1_hash.update(byte_block)
+
+    return sha1_hash.hexdigest()
+
+
+def download_https_file(cwd, url, file, cookie_file, netrc, md5, sha1):
     download_filepath = cwd.joinpath(file)
-    if md5sum and os.path.exists(download_filepath):
-        # don't download if md5sum is good
-        if md5sum == get_md5sum(download_filepath):
-            print("** Using %s" % download_filepath)
-            return
-        else:
-            os.remove(download_filepath)
+
+    if os.path.exists(download_filepath):
+        if md5:
+            # don't download if md5 is good
+            if md5 == get_md5sum(download_filepath):
+                print("** Using %s" % download_filepath)
+                return
+            else:
+                os.remove(download_filepath)
+        elif sha1:
+            # don't download if sha1 is good
+            if sha1 == get_sha1sum(download_filepath):
+                print("** Using %s" % download_filepath)
+                return
+            else:
+                os.remove(download_filepath)
 
     print("** Downloading %s via %s" % (file, url))
     res = fetch_https_binary_file(url, download_filepath, False, None, cookie_file, netrc)
@@ -1190,7 +1223,14 @@ def download_https_file(cwd, url, file, cookie_file, netrc, md5sum):
         os.remove(download_filepath)
         print_banner("Failed to download %s" % file)
         return
-    print("** Downloaded %s" % file)
+
+    if os.path.exists(download_filepath):
+        if md5:
+            if md5 != get_md5sum(download_filepath):
+                print_banner("Invalid md5!! %s" % file)
+        elif sha1:
+            if sha1 != get_sha1sum(download_filepath):
+                print_banner("Invalid sha1!! %s" % file)
 
 
 def get_filename_from_url(url):
@@ -1255,13 +1295,14 @@ def handle_http_obj(obj, host_machine_arch, cwd, cookie_file, netrc):
 
             for artifact in host_specific_artifacts:
                 endpoint = artifact['endpoint']
-                md5sum = artifact.get('md5sum')
+                md5 = artifact.get('md5')
+                sha1 = artifact.get('sha1')
 
                 base_url = url + endpoint
                 base_url = os.path.expandvars(base_url)
                 filename = get_filename_from_url(base_url)
 
-                download_https_file(cwd, base_url, filename, cookie_file, netrc, md5sum)
+                download_https_file(cwd, base_url, filename, cookie_file, netrc, md5, sha1)
 
 
 def handle_commands(cmds, cwd):
@@ -1406,11 +1447,12 @@ def get_platform_working_dir(platform_id):
 
 def create_platform_config_file(obj, cwd):
     if obj is None:
-        config_window_type = DEFAULT_WINDOW_TYPE
-        config_width = DEFAULT_WIDTH
-        config_height = DEFAULT_HEIGHT
-        config_fullscreen = DEFAULT_FULLSCREEN
-        config_cursor_theme = DEFAULT_CURSOR_THEME
+        return
+        #config_window_type = DEFAULT_WINDOW_TYPE
+        #config_width = DEFAULT_WIDTH
+        #config_height = DEFAULT_HEIGHT
+        #config_fullscreen = DEFAULT_FULLSCREEN
+        #config_cursor_theme = DEFAULT_CURSOR_THEME
 
     else:
         config_width = obj.get('width')
@@ -1461,10 +1503,10 @@ def setup_platforms(platforms, git_token, cookie_file):
         subprocess.check_call(['sudo', '-v'], stdout=subprocess.DEVNULL)
         handle_docker_obj(runtime.get('docker'), host_machine_arch, cwd)
         subprocess.check_call(['sudo', '-v'], stdout=subprocess.DEVNULL)
-
-        create_platform_config_file(runtime.get('config'), cwd)
+        create_platform_config_file(runtime.get('config'), cwd)    
+        subprocess.check_call(['sudo', '-v'], stdout=subprocess.DEVNULL)
         handle_conditionals(runtime.get('conditionals'), cwd)
-
+        subprocess.check_call(['sudo', '-v'], stdout=subprocess.DEVNULL)
         handle_custom_devices(platform_)
 
 
