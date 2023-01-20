@@ -58,6 +58,7 @@ jobs:
           git clone -b ${{ env.YOCTO_BRANCH }} --single-branch https://git.yoctoproject.org/git/meta-selinux.git &
           git clone -b ${{ env.YOCTO_BRANCH }} --single-branch https://github.com/meta-flutter/meta-flutter-rpi.git &
           git clone -b ${{ env.YOCTO_BRANCH }} --single-branch https://github.com/jwinarske/meta-vulkan.git &
+          git clone -b ${{ env.YOCTO_BRANCH }} --single-branch https://github.com/MarkusVolk/meta-wayland.git &
           wait
 
       - name: Configure build
@@ -76,11 +77,11 @@ jobs:
           echo 'IMAGE_LINGUAS:append = " en-us en-gb es-us"' >> ./conf/local.conf
           echo 'DEFAULT_TIMEZONE = "America/Los_Angeles"' >> ./conf/local.conf
           echo 'INIT_MANAGER = "systemd"' >> ./conf/local.conf
-          echo 'DISTRO_FEATURES:remove = "sysvinit x11 usbgadget"' >> ./conf/local.conf
-          echo 'DISTRO_FEATURES:append = " alsa wifi bluetooth usbhost opengl vulkan wayland pam"' >> ./conf/local.conf
+          echo 'DISTRO_FEATURES:remove = "sysvinit usbgadget"' >> ./conf/local.conf
+          echo 'DISTRO_FEATURES:append = " alsa wifi bluetooth usbhost opengl vulkan wayland xwayland x11 pam"' >> ./conf/local.conf
           echo 'RUST_PANIC_STRATEGY = "abort"' >> ./conf/local.conf
           # SELinux
-          echo 'DISTRO_FEATURES:append = " acl xattr pam selinux audit"' >> ./conf/local.conf
+          echo 'DISTRO_FEATURES:append = " security acl xattr pam selinux audit"' >> ./conf/local.conf
           echo 'PREFERRED_PROVIDER_virtual/refpolicy = "refpolicy-mls"' >> ./conf/local.conf
           # SECCOMP
           echo 'DISTRO_FEATURES:append = " seccomp"' >> ./conf/local.conf
@@ -98,6 +99,9 @@ jobs:
               gstreamer1.0-plugins-good \
               gstreamer1.0-plugins-ugly \
               ffmpeg \
+              cage \
+              sway \
+              wayfire \
               "' >> ./conf/local.conf
           echo 'LICENSE_FLAGS_ACCEPTED += " commercial"' >> ./conf/local.conf
           echo 'PACKAGECONFIG:append:pn-flutter-engine = " profile debug"' >> conf/local.conf
@@ -135,6 +139,7 @@ jobs:
           ../meta-openembedded/meta-perl \
           ../meta-security \
           ../meta-selinux \
+          ../meta-wayland \
           ../meta-clang \
           ../meta-flutter-rpi \
           ../../meta-flutter
