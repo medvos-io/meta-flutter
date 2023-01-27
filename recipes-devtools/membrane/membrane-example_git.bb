@@ -169,6 +169,8 @@ cargo_do_install:class-native() {
 
     install -d ${D}${datadir}/membrane/dart_example
 
+    cp ${S}/LICENSE ${D}${datadir}/membrane
+
     cp -r ${S}/dart_example/* ${D}${datadir}/membrane/dart_example
 }
 

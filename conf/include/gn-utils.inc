@@ -59,6 +59,24 @@ def gn_target_arch_name(d):
                  'GN_TARGET_ARCH_NAME variable could not be found.')
     return name
 
+def gn_dart_native_arch(d):
+    """Returns architecture parameters based on TARGET_ARCH and TARGET_FPU."""
+    import re
+    target_fpu = d.getVar("TARGET_FPU")
+    arch_translations = {
+        r'armv7$': ' --arch simarm --arm-float-abi %s' % (target_fpu),
+        r'aarch64$': ' --arch simarm64',
+        r'riscv32$*': ' --arch simriscv32',
+        r'riscv64$*': ' --arch simriscv64',
+        r'x64$': ' --arch x64',
+    }
+    target_arch = d.getVar("TARGET_ARCH")
+    for arch_regexp, pkg_aarch_name in arch_translations.items():
+        if re.match(arch_regexp, target_arch):
+            return pkg_aarch_name
+
+    bb.fatal('Unsuported TARGET_ARCH value: "%s"' % target_arch)
+
 def gn_clang_triple_prefix(d):
     """Returns compiler triple prefix corresponding to the target's machine
     architecture."""

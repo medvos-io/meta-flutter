@@ -1,12 +1,12 @@
 {
-	"flutter-version": "3.3.10",
+	"flutter-version": "3.3.7",
 	"platforms": [
 		{
 			"id": "desktop-auto",
 			"type": "host",
 			"flutter_runtime": "debug",
 			"runtime": {
-				"backend": "vulkan",
+				"backend": "egl",
 				"config": {
 					"width": 1920,
 					"height": 1080,
