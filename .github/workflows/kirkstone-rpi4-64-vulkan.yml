@@ -85,6 +85,7 @@ jobs:
           # SECCOMP
           echo 'DISTRO_FEATURES:append = " security seccomp"' >> ./conf/local.conf
           echo 'IMAGE_INSTALL:append = "\
+              rinput \
               vulkan-tools \
               filament-samples-vk \
               sascha-samples \
